@@ -177,6 +177,8 @@ async def add_player(interaction: discord.Interaction, roblox_id: str):
 
     await interaction.response.send_message(embed=embed)
 
+    await refresh_live_tracklist(guild_id)
+
 
 @tree.command(name="list-tracked", description="Shows all tracked players with a dropdown menu")
 async def list_tracked(interaction: discord.Interaction):
@@ -236,6 +238,8 @@ async def list_tracked(interaction: discord.Interaction):
                     color=0xFFFFFF
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
+
+                await refresh_live_tracklist(self.guild_id)
             else:
                 embed = discord.Embed(
                     description="Player not found in tracking list.",
@@ -300,6 +304,57 @@ async def set_role(interaction: discord.Interaction, role: discord.Role):
     await interaction.response.send_message(embed=embed)
 
 
+@tree.command(name="live-tracklist", description="Posts a live leaderboard of all tracked players")
+@app_commands.describe(channel="The channel where the live tracklist should be posted")
+async def live_tracklist(interaction: discord.Interaction, channel: discord.TextChannel):
+    if interaction.guild is None:
+        await interaction.response.send_message("This command can only be used in a server.", ephemeral=True)
+        return
+
+    await interaction.response.defer(ephemeral=True)
+    guild_id = str(interaction.guild_id)
+
+    if not channel.permissions_for(interaction.guild.me).send_messages:
+        await interaction.followup.send(
+            "I don't have permission to send messages in that channel.",
+            ephemeral=True
+        )
+        return
+
+    settings = await db.select_one(GUILD_SETTINGS, {"guild_id": guild_id})
+    if settings and settings.get('tracklist_channel_id') and settings.get('tracklist_message_id'):
+        try:
+            old_channel = await client.fetch_channel(settings['tracklist_channel_id'])
+            old_message = await old_channel.fetch_message(settings['tracklist_message_id'])
+            await old_message.delete()
+        except Exception:
+            pass
+
+    view = await build_tracklist_view(guild_id)
+
+    try:
+        message = await channel.send(view=view)
+    except Exception as e:
+        await interaction.followup.send(f"Failed to post the tracklist: {e}", ephemeral=True)
+        return
+
+    await db.upsert(
+        GUILD_SETTINGS,
+        {
+            "guild_id": guild_id,
+            "tracklist_channel_id": channel.id,
+            "tracklist_message_id": message.id,
+        },
+        on_conflict="guild_id"
+    )
+
+    embed = discord.Embed(
+        description=f"Live tracklist created in {channel.mention}",
+        color=0xFFFFFF
+    )
+    await interaction.followup.send(embed=embed, ephemeral=True)
+
+
 def build_player_view(*, username: str, display_name: str, avatar_url: str,
                       online: bool, role_mention: str = "",
                       join_url: str = None) -> discord.ui.LayoutView:
@@ -338,6 +393,78 @@ def build_player_view(*, username: str, display_name: str, avatar_url: str,
 
     view.add_item(container)
     return view
+
+
+async def build_tracklist_view(guild_id: str) -> discord.ui.LayoutView:
+    """Build the live tracklist board (no colour bar, avatars as thumbnails)."""
+    players = await db.select(TRACKED_PLAYERS, filters={"guild_id": guild_id}, limit=1000)
+    players.sort(key=lambda p: p.get('added_at') or '')
+
+    async def avatar_for(player_data: dict):
+        try:
+            return await roblox_api.get_user_avatar_url(int(player_data['roblox_id']))
+        except Exception:
+            return None
+
+    avatars = await asyncio.gather(*(avatar_for(p) for p in players))
+
+    view = discord.ui.LayoutView(timeout=None)
+    container = discord.ui.Container()  # no accent_colour -> no colour bar
+
+    container.add_item(discord.ui.TextDisplay("## Live Tracklist"))
+
+    if players:
+        count = len(players)
+        container.add_item(discord.ui.TextDisplay(
+            f"-# Tracking {count} player{'s' if count != 1 else ''}"
+        ))
+    else:
+        container.add_item(discord.ui.TextDisplay("-# No players are currently tracked."))
+
+    for index, (player, avatar_url) in enumerate(zip(players, avatars), start=1):
+        container.add_item(discord.ui.Separator())
+
+        entry = discord.ui.TextDisplay(
+            f"**{index}. {player.get('username', 'Unknown')}**\n"
+            f"ID: `{player.get('roblox_id', 'Unknown')}`"
+        )
+
+        if avatar_url:
+            container.add_item(discord.ui.Section(
+                entry,
+                accessory=discord.ui.Thumbnail(avatar_url),
+            ))
+        else:
+            container.add_item(entry)
+
+    view.add_item(container)
+    return view
+
+
+async def refresh_live_tracklist(guild_id: str):
+    """Update the guild's live tracklist message after a player is added or removed."""
+    settings = await db.select_one(GUILD_SETTINGS, {"guild_id": guild_id})
+    if not settings or not settings.get('tracklist_channel_id') or not settings.get('tracklist_message_id'):
+        return
+
+    try:
+        channel = await client.fetch_channel(settings['tracklist_channel_id'])
+        view = await build_tracklist_view(guild_id)
+
+        try:
+            message = await channel.fetch_message(settings['tracklist_message_id'])
+        except discord.NotFound:
+            message = await channel.send(view=view)
+            await db.update(
+                GUILD_SETTINGS,
+                {"guild_id": guild_id},
+                {"tracklist_message_id": message.id}
+            )
+            return
+
+        await message.edit(view=view)
+    except Exception as e:
+        print(f"Failed to refresh live tracklist for guild {guild_id}: {e}", flush=True)
 
 
 async def send_online_notification(guild_id: str, user_id: str, player_data: dict, status_info: dict):
