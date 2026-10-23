@@ -139,7 +139,7 @@ async def add_player(interaction: discord.Interaction, roblox_id: str):
         user_id = int(roblox_id)
     except ValueError:
         embed = discord.Embed(
-            description="❌ Invalid Roblox ID. Please provide a valid Profile ID (numbers only).",
+            description="Invalid Roblox ID. Please provide a valid Profile ID (numbers only).",
             color=0xFFFFFF
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -149,7 +149,7 @@ async def add_player(interaction: discord.Interaction, roblox_id: str):
 
     if not user_info:
         embed = discord.Embed(
-            description=f"❌ Could not find Roblox user with ID: {user_id}",
+            description=f"Could not find Roblox user with ID: {user_id}",
             color=0xFFFFFF
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -171,7 +171,7 @@ async def add_player(interaction: discord.Interaction, roblox_id: str):
     )
 
     embed = discord.Embed(
-        description=f"✅ Now tracking **{user_info['displayName']}** (@{user_info['name']})\n Profile ID: `{user_id}`",
+        description=f"Now tracking **{user_info['displayName']}** (@{user_info['name']})\n Profile ID: `{user_id}`",
         color=0xFFFFFF
     )
 
@@ -186,7 +186,7 @@ async def list_tracked(interaction: discord.Interaction):
 
     if not players:
         embed = discord.Embed(
-            description="📋 No players are currently being tracked.\nUse `/add-player <roblox_id>` to start tracking players.",
+            description="No players are currently being tracked.\nUse `/add-player <roblox_id>` to start tracking players.",
             color=0xFFFFFF
         )
         await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -232,13 +232,13 @@ async def list_tracked(interaction: discord.Interaction):
                 )
 
                 embed = discord.Embed(
-                    description=f"✅ Removed **{player_data['display_name']}** (@{player_data['username']}) from tracking.",
+                    description=f"Removed **{player_data['display_name']}** (@{player_data['username']}) from tracking.",
                     color=0xFFFFFF
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
             else:
                 embed = discord.Embed(
-                    description="❌ Player not found in tracking list.",
+                    description="Player not found in tracking list.",
                     color=0xFFFFFF
                 )
                 await interaction.response.send_message(embed=embed, ephemeral=True)
@@ -254,7 +254,7 @@ async def list_tracked(interaction: discord.Interaction):
     ])
 
     embed = discord.Embed(
-        title="📋 Tracked Players",
+        title="Tracked Players",
         description=f"{player_list}\n\n**Select a player below to remove them from tracking:**",
         color=0xFFFFFF
     )
@@ -274,7 +274,7 @@ async def set_channel(interaction: discord.Interaction, channel: discord.TextCha
     )
 
     embed = discord.Embed(
-        description=f"✅ Notifications will now be sent to {channel.mention}",
+        description=f"Notifications will now be sent to {channel.mention}",
         color=0xFFFFFF
     )
 
@@ -293,7 +293,7 @@ async def set_role(interaction: discord.Interaction, role: discord.Role):
     )
 
     embed = discord.Embed(
-        description=f"✅ Will now ping {role.mention} when a tracked player is online",
+        description=f"Will now ping {role.mention} when a tracked player is online",
         color=0xFFFFFF
     )
 
@@ -302,45 +302,46 @@ async def set_role(interaction: discord.Interaction, role: discord.Role):
 
 def build_player_view(*, display_name: str, username: str, user_id: str,
                       profile_link: str, avatar_url: str, online: bool,
-                      playing: str = None, role_mention: str = "",
+                      playing: str = None,
                       join_url: str = None) -> discord.ui.LayoutView:
-    """Build a Components V2 player card (no colour bar)."""
+    """Build a Components V2 player card (no colour bar, no emojis)."""
     view = discord.ui.LayoutView(timeout=None)
     container = discord.ui.Container()  # no accent_colour -> no colour bar
 
-    if role_mention:
-        container.add_item(discord.ui.TextDisplay(role_mention))
+    state = "Online" if online else "Offline"
 
-    container.add_item(discord.ui.TextDisplay(
-        "## 🟢 Player Online" if online else "## 🔴 Player Offline"
-    ))
-    container.add_item(discord.ui.Separator())
-
-    info = (
-        f"**[{display_name}]({profile_link})**\n"
-        f"**Username:** `{username}`\n"
-        f"**User ID:** `{user_id}`\n"
-        f"**Status:** {'🟢 Online' if online else '🔴 Offline'}"
+    header = discord.ui.TextDisplay(
+        f"## Player {state}\n**[{display_name}]({profile_link})**"
     )
-    if online and playing:
-        info += f"\n**Playing:** {playing}"
 
     if avatar_url:
         container.add_item(discord.ui.Section(
-            info,
+            header,
             accessory=discord.ui.Thumbnail(avatar_url),
         ))
     else:
-        container.add_item(discord.ui.TextDisplay(info))
+        container.add_item(header)
+
+    container.add_item(discord.ui.Separator())
+
+    details = (
+        f"-# USERNAME\n`{username}`\n\n"
+        f"-# USER ID\n`{user_id}`\n\n"
+        f"-# STATUS\n{state}"
+    )
+    if online and playing:
+        details += f"\n\n-# PLAYING\n{playing}"
+    container.add_item(discord.ui.TextDisplay(details))
 
     if online and join_url:
         container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.ActionRow(
-            discord.ui.Button(
+        container.add_item(discord.ui.Section(
+            discord.ui.TextDisplay("-# SERVER\nThe player is in a joinable server."),
+            accessory=discord.ui.Button(
                 label="Join Server | Ropro",
                 style=discord.ButtonStyle.link,
                 url=join_url,
-            )
+            ),
         ))
 
     view.add_item(container)
@@ -391,14 +392,16 @@ async def send_online_notification(guild_id: str, user_id: str, player_data: dic
         avatar_url=avatar_url,
         online=True,
         playing=status_info.get('game'),
-        role_mention=role_mention,
         join_url=join_url,
     )
 
-    msg = await channel.send(
-        view=view,
-        allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
-    )
+    if role_mention:
+        await channel.send(
+            content=role_mention,
+            allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+        )
+
+    msg = await channel.send(view=view)
 
     await db.update(
         TRACKED_PLAYERS,
