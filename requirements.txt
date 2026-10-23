@@ -1,11 +1,3 @@
 discord.py>=2.0.0
 aiohttp>=3.8.0
-aiohttp
-discord.py
-aiohttp
-discord.py
-aiohttp
-discord.py
-aiohttp
-discord.py
-motor
+python-dotenv>=1.0.0

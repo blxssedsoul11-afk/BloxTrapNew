@@ -164,6 +164,22 @@ class RobloxAPI:
             return result
         return None
     
+    async def get_ropro_invite(self, universe_id, game_id) -> Optional[str]:
+        """Create a RoPro invite link for a specific server (no auth required)."""
+        if not universe_id or not game_id:
+            return None
+        await self.create_session()
+        url = f"https://api.ropro.io/createInvite.php?universeid={universe_id}&serverid={game_id}"
+        try:
+            async with self.session.get(url, timeout=aiohttp.ClientTimeout(total=10)) as resp:
+                text = (await resp.text()).strip()
+                if resp.status == 200 and text.startswith("https://ropro.io/invite/"):
+                    return text
+                print(f"RoPro invite failed ({resp.status}): {text[:200]}")
+        except Exception as e:
+            print(f"RoPro invite error: {e}")
+        return None
+
     async def get_player_status(self, user_id: int) -> Dict:
         try:
             presence_task = asyncio.create_task(self.get_user_presence(user_id))
