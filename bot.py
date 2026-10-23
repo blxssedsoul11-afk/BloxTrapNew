@@ -400,13 +400,17 @@ async def build_tracklist_view(guild_id: str) -> discord.ui.LayoutView:
     players = await db.select(TRACKED_PLAYERS, filters={"guild_id": guild_id}, limit=1000)
     players.sort(key=lambda p: p.get('added_at') or '')
 
+    # Components V2 allows 40 components per message; keep the board inside that limit.
+    max_entries = 9
+    shown_players = players[:max_entries]
+
     async def avatar_for(player_data: dict):
         try:
             return await roblox_api.get_user_avatar_url(int(player_data['roblox_id']))
         except Exception:
             return None
 
-    avatars = await asyncio.gather(*(avatar_for(p) for p in players))
+    avatars = await asyncio.gather(*(avatar_for(p) for p in shown_players))
 
     view = discord.ui.LayoutView(timeout=None)
     container = discord.ui.Container()  # no accent_colour -> no colour bar
@@ -415,13 +419,14 @@ async def build_tracklist_view(guild_id: str) -> discord.ui.LayoutView:
 
     if players:
         count = len(players)
-        container.add_item(discord.ui.TextDisplay(
-            f"-# Tracking {count} player{'s' if count != 1 else ''}"
-        ))
+        line = f"-# Tracking {count} player{'s' if count != 1 else ''}"
+        if count > max_entries:
+            line += f" — showing first {max_entries}"
+        container.add_item(discord.ui.TextDisplay(line))
     else:
         container.add_item(discord.ui.TextDisplay("-# No players are currently tracked."))
 
-    for index, (player, avatar_url) in enumerate(zip(players, avatars), start=1):
+    for index, (player, avatar_url) in enumerate(zip(shown_players, avatars), start=1):
         container.add_item(discord.ui.Separator())
 
         entry = discord.ui.TextDisplay(
