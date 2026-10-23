@@ -56,6 +56,30 @@ Discord bot that tracks Roblox players' online status and posts notifications wi
 | `DATA_FILE` | No | JSON database path (default: `data.json`) |
 | `PORT` | No | Health-check server port (default: `8080`) |
 
+## Components V2
+
+`discord.py>=2.6.0` supports Discord **Components V2**. Send a `LayoutView` instead of an embed:
+
+```python
+import discord
+
+view = discord.ui.LayoutView()
+container = discord.ui.Container(accent_colour=discord.Colour.blurple())
+container.add_item(discord.ui.TextDisplay("## Player Online"))
+container.add_item(discord.ui.Separator())
+container.add_item(discord.ui.Section(
+    "**dimepro1236** is now online",
+    accessory=discord.ui.Thumbnail("https://example.com/avatar.png"),
+))
+view.add_item(container)
+
+await channel.send(view=view)
+```
+
+Notes:
+- `content`, `embeds`, and stickers **cannot** be combined with Components V2 in the same message.
+- `discord.py` sets the `IS_COMPONENTS_V2` flag automatically when the view contains V2 components.
+
 ## Notes
 
 - `data.json` is created automatically on first run and is gitignored.
