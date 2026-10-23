@@ -300,60 +300,45 @@ async def set_role(interaction: discord.Interaction, role: discord.Role):
     await interaction.response.send_message(embed=embed)
 
 
-def build_player_view(*, display_name: str, username: str, user_id: str,
-                      profile_link: str, avatar_url: str, online: bool,
-                      playing: str = None, role_mention: str = "",
-                      join_url: str = None) -> discord.ui.LayoutView:
-    """Build a Components V2 player card (no colour bar)."""
-    view = discord.ui.LayoutView(timeout=None)
-    container = discord.ui.Container()  # no accent_colour -> no colour bar
+class JoinServerButton(discord.ui.View):
+    def __init__(self, place_id: int, user_id: int, invite_url: str = None):
+        super().__init__(timeout=None)
+        self.place_id = place_id
+        self.user_id = user_id
 
-    if role_mention:
-        container.add_item(discord.ui.TextDisplay(role_mention))
-
-    container.add_item(discord.ui.TextDisplay(
-        "## 🟢 Player Online" if online else "## 🔴 Player Offline"
-    ))
-    container.add_item(discord.ui.Separator())
-
-    info = (
-        f"**[{display_name}]({profile_link})**\n"
-        f"**Username:** `{username}`\n"
-        f"**User ID:** `{user_id}`\n"
-        f"**Status:** {'🟢 Online' if online else '🔴 Offline'}"
-    )
-    if online and playing:
-        info += f"\n**Playing:** {playing}"
-
-    if avatar_url:
-        container.add_item(discord.ui.Section(
-            info,
-            accessory=discord.ui.Thumbnail(avatar_url),
-        ))
-    else:
-        container.add_item(discord.ui.TextDisplay(info))
-
-    if online and join_url:
-        container.add_item(discord.ui.Separator())
-        container.add_item(discord.ui.ActionRow(
-            discord.ui.Button(
-                label="Join Server | Ropro",
-                style=discord.ButtonStyle.link,
-                url=join_url,
-            )
-        ))
-
-    view.add_item(container)
-    return view
+        if invite_url:
+            join_url = invite_url
+        else:
+            join_url = f"https://www.roblox.com/games/start?placeId={place_id}&launchData=user:{user_id}"
+        button = discord.ui.Button(
+            label="Join Server",
+            style=discord.ButtonStyle.gray,
+            url=join_url
+        )
+        self.add_item(button)
 
 
 async def send_online_notification(guild_id: str, user_id: str, player_data: dict, status_info: dict):
     user_info = status_info.get('user_info', {})
     display_name = user_info.get('displayName', player_data.get('display_name', 'Unknown'))
-    username = user_info.get('name', player_data.get('username', 'Unknown'))
 
     avatar_url = await roblox_api.get_user_avatar_url(int(user_id))
     profile_link = f"https://www.roblox.com/users/{user_id}/profile"
+
+    description = (
+        f"**[{display_name}]({profile_link})**\n"
+        f"━━━━━━ • Profile • ━━━━━━━\n\n"
+        f"**Status: Online ✅**"
+    )
+
+    embed = discord.Embed(
+        description=description,
+        color=0xFFFFFF,
+        timestamp=datetime.utcnow()
+    )
+
+    if avatar_url:
+        embed.set_image(url=avatar_url)
 
     settings = await db.select_one(GUILD_SETTINGS, {"guild_id": guild_id})
 
@@ -375,30 +360,13 @@ async def send_online_notification(guild_id: str, user_id: str, player_data: dic
     universe_id = presence.get('universeId')
     job_id = presence.get('gameId')
 
-    ropro_url = await roblox_api.get_ropro_invite(universe_id, job_id)
-    if ropro_url:
-        print(f"RoPro invite for {user_id}: {ropro_url}", flush=True)
+    invite_url = await roblox_api.get_ropro_invite(universe_id, job_id)
+    if invite_url:
+        print(f"RoPro invite for {user_id}: {invite_url}", flush=True)
 
-    join_url = ropro_url
-    if not join_url and place_id:
-        join_url = f"https://www.roblox.com/games/start?placeId={place_id}&launchData=user:{user_id}"
+    view = JoinServerButton(place_id=place_id, user_id=int(user_id), invite_url=invite_url) if place_id else None
 
-    view = build_player_view(
-        display_name=display_name,
-        username=username,
-        user_id=user_id,
-        profile_link=profile_link,
-        avatar_url=avatar_url,
-        online=True,
-        playing=status_info.get('game'),
-        role_mention=role_mention,
-        join_url=join_url,
-    )
-
-    msg = await channel.send(
-        view=view,
-        allowed_mentions=discord.AllowedMentions(roles=True, users=True, everyone=False),
-    )
+    msg = await channel.send(content=role_mention if role_mention else None, embed=embed, view=view)
 
     await db.update(
         TRACKED_PLAYERS,
@@ -420,30 +388,24 @@ async def update_offline_notification(guild_id: str, user_id: str, player_data: 
         msg = await channel.fetch_message(player_data['message_id'])
 
         display_name = player_data.get('display_name', 'Unknown')
-        username = player_data.get('username', 'Unknown')
         profile_link = f"https://www.roblox.com/users/{user_id}/profile"
         avatar_url = await roblox_api.get_user_avatar_url(int(user_id))
 
-        view = build_player_view(
-            display_name=display_name,
-            username=username,
-            user_id=user_id,
-            profile_link=profile_link,
-            avatar_url=avatar_url,
-            online=False,
+        description = (
+            f"**[{display_name}]({profile_link})**\n"
+            f"━━━━━━ • Profile • ━━━━━━━\n\n"
+            f"**Status: Offline ❌**"
         )
 
-        try:
-            await msg.edit(view=view)
-        except discord.HTTPException as e:
-            # Messages created before Components V2 cannot be converted.
-            # Replace the old message with a fresh V2 card.
-            print(f"Could not edit old message ({e}); replacing it.", flush=True)
-            try:
-                await msg.delete()
-            except Exception:
-                pass
-            await channel.send(view=view)
+        embed = discord.Embed(
+            description=description,
+            color=0xFFFFFF,
+            timestamp=datetime.utcnow()
+        )
+        if avatar_url:
+            embed.set_image(url=avatar_url)
+
+        await msg.edit(content=None, embed=embed, view=None)
 
         # Clear message_id after marking offline to avoid re-editing
         await db.update(
