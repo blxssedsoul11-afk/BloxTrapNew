@@ -300,32 +300,37 @@ async def set_role(interaction: discord.Interaction, role: discord.Role):
     await interaction.response.send_message(embed=embed)
 
 
-def build_player_view(*, display_name: str, profile_link: str, avatar_url: str,
-                      online: bool, playing: str = None,
+def build_player_view(*, username: str, display_name: str, avatar_url: str,
+                      online: bool, role_mention: str = "",
                       join_url: str = None) -> discord.ui.LayoutView:
-    """Build a minimal Components V2 player card (no colour bar, no emojis)."""
+    """Build a Components V2 player card (no colour bar)."""
     view = discord.ui.LayoutView(timeout=None)
     container = discord.ui.Container()  # no accent_colour -> no colour bar
 
-    if online:
-        status = f"Online in {playing}" if playing else "Online"
-    else:
-        status = "Offline"
+    header = f"## {username} | {display_name}"
+    if online and role_mention:
+        header += f"\n-# {role_mention}"
+    container.add_item(discord.ui.TextDisplay(header))
+    container.add_item(discord.ui.Separator())
 
-    text = discord.ui.TextDisplay(f"## [{display_name}]({profile_link})\n{status}")
+    container.add_item(discord.ui.TextDisplay(
+        "A player has been caught\n"
+        "Server link and user live user status are found below!"
+    ))
+
+    state = "Online" if online else "Offline"
+    container.add_item(discord.ui.TextDisplay(f"> Current status — {state}"))
 
     if avatar_url:
-        container.add_item(discord.ui.Section(
-            text,
-            accessory=discord.ui.Thumbnail(avatar_url),
+        container.add_item(discord.ui.MediaGallery(
+            discord.MediaGalleryItem(avatar_url)
         ))
-    else:
-        container.add_item(text)
 
-    if online and join_url:
+    if join_url:
+        label = "Join Server | Ropro" if online else "Join Server | Ropro / User Offline ❕"
         container.add_item(discord.ui.ActionRow(
             discord.ui.Button(
-                label="Join Server | Ropro",
+                label=label,
                 style=discord.ButtonStyle.link,
                 url=join_url,
             )
@@ -338,9 +343,9 @@ def build_player_view(*, display_name: str, profile_link: str, avatar_url: str,
 async def send_online_notification(guild_id: str, user_id: str, player_data: dict, status_info: dict):
     user_info = status_info.get('user_info', {})
     display_name = user_info.get('displayName', player_data.get('display_name', 'Unknown'))
+    username = user_info.get('name', player_data.get('username', 'Unknown'))
 
     avatar_url = await roblox_api.get_user_avatar_url(int(user_id))
-    profile_link = f"https://www.roblox.com/users/{user_id}/profile"
 
     settings = await db.select_one(GUILD_SETTINGS, {"guild_id": guild_id})
 
@@ -371,26 +376,23 @@ async def send_online_notification(guild_id: str, user_id: str, player_data: dic
         join_url = f"https://www.roblox.com/games/start?placeId={place_id}&launchData=user:{user_id}"
 
     view = build_player_view(
+        username=username,
         display_name=display_name,
-        profile_link=profile_link,
         avatar_url=avatar_url,
         online=True,
-        playing=status_info.get('game'),
+        role_mention=role_mention,
         join_url=join_url,
     )
 
-    if role_mention:
-        await channel.send(
-            content=role_mention,
-            allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
-        )
-
-    msg = await channel.send(view=view)
+    msg = await channel.send(
+        view=view,
+        allowed_mentions=discord.AllowedMentions(roles=True, users=False, everyone=False),
+    )
 
     await db.update(
         TRACKED_PLAYERS,
         {"guild_id": guild_id, "roblox_id": user_id},
-        {"message_id": msg.id}
+        {"message_id": msg.id, "join_url": join_url}
     )
 
 
@@ -407,14 +409,15 @@ async def update_offline_notification(guild_id: str, user_id: str, player_data: 
         msg = await channel.fetch_message(player_data['message_id'])
 
         display_name = player_data.get('display_name', 'Unknown')
-        profile_link = f"https://www.roblox.com/users/{user_id}/profile"
+        username = player_data.get('username', 'Unknown')
         avatar_url = await roblox_api.get_user_avatar_url(int(user_id))
 
         view = build_player_view(
+            username=username,
             display_name=display_name,
-            profile_link=profile_link,
             avatar_url=avatar_url,
             online=False,
+            join_url=player_data.get('join_url'),
         )
 
         try:
